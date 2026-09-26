@@ -21,8 +21,8 @@ from enum import Enum
 CANCELABLE_HAIRCUT = 0.5     # cancelable stream's remaining value counts at 50%
 NON_CANCELABLE_HAIRCUT = 1.0
 
-FULL_APPROVAL_CR = 1.5       # coverage ratio >= this -> full requested line
-DECLINE_CR = 1.0             # coverage ratio < this -> decline
+ELIGIBILITY_FLOOR_CR = 1.0   # coverage ratio < this -> ineligible, binary decline
+TARGET_MARGIN = 1.5          # advance rate divisor applied to eligible income
 
 
 class Tier(str, Enum):
@@ -101,17 +101,23 @@ def score(inputs: ScoringInput) -> ScoringResult:
     else:
         coverage_ratio = risk_adjusted_income / inputs.requested_credit_line
 
-    if coverage_ratio >= FULL_APPROVAL_CR:
-        tier = Tier.FULL
-        approved_line = inputs.requested_credit_line
-    elif coverage_ratio >= DECLINE_CR:
-        tier = Tier.TIGHTENED
-        # Size the line down to what is actually 1:1 covered by risk-adjusted
-        # income rather than extending the full ask at an inadequate margin.
-        approved_line = risk_adjusted_income
-    else:
+    if coverage_ratio < ELIGIBILITY_FLOOR_CR:
+        # Eligibility screen, binary: risk-adjusted income can't even
+        # nominally cover the ask, so this collateral isn't bankable at all.
         tier = Tier.DECLINE
         approved_line = 0.0
+    else:
+        # Margin-adjusted advance, continuous: always size the line so the
+        # amount actually approved is covered at TARGET_MARGIN, never more
+        # than what was asked. This degrades smoothly instead of snapping
+        # between fixed buckets, which matches the thesis: continuous
+        # re-scoring is what lets the line run close to the requested
+        # amount, rather than needing a big static buffer baked into a
+        # discrete tier.
+        approved_line = min(
+            inputs.requested_credit_line, risk_adjusted_income / TARGET_MARGIN
+        )
+        tier = Tier.FULL if approved_line >= inputs.requested_credit_line else Tier.TIGHTENED
 
     return ScoringResult(
         risk_adjusted_income=risk_adjusted_income,

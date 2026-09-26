@@ -128,16 +128,45 @@ risk_adjusted_income = sum(risk_adjusted_value_i for all active streams)
 coverage_ratio        = risk_adjusted_income / requested_credit_line
 ```
 
-Tiering:
+Sizing (revised — see "correction" below for what changed and why):
 
 ```
-coverage_ratio >= 1.5   -> FULL approval, approved_line = requested_credit_line
-1.0 <= coverage_ratio < 1.5 -> TIGHTENED, approved_line = risk_adjusted_income
-                                (sized down to what is actually 1:1 covered,
-                                 rather than extending the full ask at an
-                                 inadequate safety margin)
-coverage_ratio < 1.0    -> DECLINE, approved_line = 0
+coverage_ratio < 1.0   -> DECLINE, approved_line = 0
+                           (eligibility screen, binary: risk-adjusted income
+                            can't even nominally cover the ask)
+
+coverage_ratio >= 1.0  -> approved_line = min(requested_credit_line,
+                                               risk_adjusted_income / 1.5)
+                           tier = FULL if approved_line == requested_credit_line
+                                  else TIGHTENED
+                           (margin-adjusted advance, continuous: the line is
+                            always sized so the AMOUNT ACTUALLY APPROVED is
+                            covered at a 1.5x margin, never more than what
+                            was asked)
 ```
+
+#### Correction made during confirmation (worth recording, not hiding)
+
+The first version of this formula set `approved_line = risk_adjusted_income`
+directly in the 1.0-1.5 coverage band. That's wrong: since
+`risk_adjusted_income = coverage_ratio * requested_credit_line`, for any
+coverage ratio in that band `risk_adjusted_income >= requested_credit_line`
+— meaning the "tightened" tier was silently approving *more* than the ask,
+never less. Caught this when asked to actually push back on the thresholds
+rather than rubber-stamp them.
+
+The fix also changed the shape of the model, not just capped the bug:
+tiering was replaced with (1) a binary eligibility floor at coverage ratio
+1.0, exactly as real ABL practice screens receivables in/out of the
+borrowing base at all, and (2) a continuous margin-adjusted advance for
+everything eligible, rather than a second discrete tier. This is also a
+better fit for the thesis: continuous re-scoring is supposed to be what
+lets Concordat run without Goldfinch/Maple's large static safety margins,
+so the sizing function should itself be continuous, not snap between fixed
+buckets with a hard boundary that has to be defended on its own.
+
+1.0 and 1.5 are unchanged as the two threshold numbers (see rationale
+below) — the correction was in how they're used, not their values.
 
 ### Thresholds — stated as deliberate choices, confirmed with the user
 
@@ -146,14 +175,17 @@ coverage_ratio < 1.0    -> DECLINE, approved_line = 0
   (stricter) and 0x (exclude entirely) and rejected both — 0x throws away
   real signal from long-running cancelable streams that have never been
   canceled, 0.25x had no principled anchor beyond "more conservative."
-- **Full-approval threshold = 1.5x coverage.** Chosen over 2.0x (too
-  conservative for a demo, most streams wouldn't clear it) and 1.0x (no
-  safety margin — a wallet whose income exactly equals the ask on paper
-  has zero room for the stream running dry before the loan matures).
-- **Decline threshold = 1.0x coverage.** Below nominal 1:1 coverage, the
-  income literally cannot cover the line even before any haircut is
-  applied further downstream (e.g. before repayment / interest), so this
-  is a hard floor, not a judgment call.
+- **Target margin = 1.5x.** Confirmed, not revised — divisor applied to
+  risk-adjusted income to size the approved line. Chosen over 2.0x (too
+  conservative for a demo, most streams wouldn't clear it for their full
+  ask) and 1.0x (no safety margin — a wallet whose risk-adjusted income
+  exactly equals the approved amount has zero room for the stream
+  running dry before the loan matures, which is the exact failure mode
+  this project exists to avoid).
+- **Eligibility floor = 1.0x coverage.** Confirmed, not revised — below
+  nominal 1:1 coverage, the income literally cannot cover the line even
+  before the margin is applied, so this is a hard binary floor: not
+  bankable at all, not a smaller line.
 - **Concentration (single-sender / HHI) haircut: skipped for v1.** Most
   cohort wallets will have one sender (one employer-style stream), so
   this term would be an inert constant multiplier on the wallets we
@@ -171,18 +203,22 @@ fewer than 2 historical streams to compute it from.
 
 ### Gate: hand-walked in `scoring/example.py`
 
-Two illustrative cases (explicitly labeled illustrative, not real
+Three illustrative cases (explicitly labeled illustrative, not real
 borrower data — see below) confirm the formula's mechanics:
 
 1. Non-cancelable stream, $9000 deposit / $3000 withdrawn, 30 days into a
    90-day schedule, $4000 ask, 60-day loan term → coverage ratio exactly
    1.5, tier FULL, approved line $4000.
-2. Identical stream but cancelable → risk-adjusted income halves,
-   coverage ratio drops to 0.75, tier flips to DECLINE. This is the
-   formula doing its actual job: the same underlying cashflow is treated
-   very differently based on whether it's guaranteed.
+2. Identical stream but cancelable and a $4000 ask → risk-adjusted income
+   halves to $3000, coverage ratio 0.75, below the eligibility floor ->
+   DECLINE, approved line $0. Same underlying cashflow, opposite outcome,
+   purely because it's not guaranteed — the haircut doing its actual job.
+3. Same non-cancelable stream but a $5000 ask → coverage ratio 1.2,
+   eligible (>= 1.0) but below the 1.5x target margin -> TIGHTENED,
+   approved line sized down to $4000 (min($5000, $6000/1.5)) — correctly
+   below the ask, which is what the earlier buggy version failed to do.
 
-Both assertions pass (`python3 scoring/example.py`).
+All assertions pass (`python3 scoring/example.py`).
 
 ### Blocker: this session's network policy blocks live Monad RPC and every block explorer tried
 

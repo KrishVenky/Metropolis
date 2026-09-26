@@ -50,7 +50,7 @@ print(f"approved_line:          {result.approved_line:.2f}")
 # Sanity: remaining_value = 9000 - 3000 = 6000
 # runway_factor = min(1, 60d remaining / 60d loan_term) = 1.0 (60 days left of 90, loan term 60d)
 # risk_adjusted_income = 6000 * 1.0 (non-cancelable) * 1.0 (runway) = 6000
-# coverage_ratio = 6000 / 4000 = 1.5 -> FULL tier, boundary case, approved_line = 4000
+# coverage_ratio = 6000 / 4000 = 1.5 -> exactly clears TARGET_MARGIN, FULL, approved_line = 4000
 assert abs(stream.remaining_value() - 6000.0) < 1e-9
 assert abs(result.coverage_ratio - 1.5) < 1e-9
 assert result.tier.value == "full"
@@ -87,3 +87,36 @@ assert result2.tier.value == "decline"
 assert result2.approved_line == 0.0
 print("\nassertions passed: cancelability haircut correctly flips full -> decline"
       " for the same underlying cashflow, which is the whole point of the haircut.")
+
+print("\n--- non-cancelable stream, eligible but below target margin: TIGHTENED ---")
+stream_thin = Stream(
+    stream_id=3,
+    sender="0xEMPLOYER_ILLUSTRATIVE",
+    deposit_amount=9000.0,
+    withdrawn_amount=3000.0,
+    start_time=0,
+    end_time=90 * DAY,
+    cancelable=False,
+    canceled=False,
+)
+inputs3 = ScoringInput(
+    streams=[stream_thin],
+    requested_credit_line=5000.0,  # bigger ask against the same $6000 remaining value
+    loan_term_seconds=60 * DAY,
+    as_of_time=30 * DAY,
+    block_number=0,
+)
+result3 = score(inputs3)
+# risk_adjusted_income = 6000 (no haircuts, non-cancelable, full runway)
+# coverage_ratio = 6000 / 5000 = 1.2 -> eligible (>=1.0) but below TARGET_MARGIN (1.5)
+# approved_line = min(5000, 6000 / 1.5) = min(5000, 4000) = 4000, i.e. sized DOWN below the ask
+print(f"risk_adjusted_income:   {result3.risk_adjusted_income:.2f}")
+print(f"coverage_ratio:         {result3.coverage_ratio:.3f}")
+print(f"tier:                   {result3.tier.value}")
+print(f"approved_line:          {result3.approved_line:.2f}")
+assert abs(result3.coverage_ratio - 1.2) < 1e-9
+assert result3.tier.value == "tightened"
+assert abs(result3.approved_line - 4000.0) < 1e-9
+assert result3.approved_line < inputs3.requested_credit_line
+print("\nassertions passed: TIGHTENED now correctly sizes the line BELOW the ask"
+      " (4000 < 5000 requested), fixing the earlier bug where it could exceed the ask.")
