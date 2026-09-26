@@ -220,26 +220,68 @@ borrower data — see below) confirm the formula's mechanics:
 
 All assertions pass (`python3 scoring/example.py`).
 
-### Blocker: this session's network policy blocks live Monad RPC and every block explorer tried
+### Network blocker — resolved (2026-09-26)
 
-`rpc.monad.xyz`, `www.monadexplorer.com`, and `docs.monad.xyz` are all
-denied by this environment's egress proxy (allowlist-based, deny by
-default — confirmed via the proxy's own status endpoint, not guessed).
-Only certain hosts (GitHub, raw.githubusercontent.com) are reachable
-directly; the WebFetch/WebSearch tools have a separate, broader backend
-that could reach some but not all of the needed hosts.
+`rpc.monad.xyz` was denied by this environment's egress proxy; user added
+it to the environment's allowed domains. `www.monadexplorer.com` and
+`docs.monad.xyz` remain blocked, but weren't needed once direct RPC
+access worked — every fact below came from `eth_call`/`eth_getLogs`
+against `rpc.monad.xyz` plus `eth_getCode`/`eth_blockNumber` to confirm
+liveness, not from either blocked host.
 
-This means the Phase 1 gate above was validated with illustrative
-parameters, not a live wallet — clearly labeled as such in
-`scoring/example.py` and never presented as real. Pulling one real
-wallet's actual stream state (for Phase 1's true gate and for Phase 2's
-live monitoring) requires either:
-1. Broadening this environment's network access to include
-   `rpc.monad.xyz` (or an allowed RPC provider) via the environment's
-   Network settings, or
-2. The user supplying a real stream's parameters (recipient, stream id,
-   block number) pulled from their own tooling, which this scoring module
-   can then run against directly and deterministically.
+### Phase 1 gate, re-run against a real live stream (2026-09-26)
 
-Flagging this now rather than proceeding into Phase 2 (live monitoring)
-on top of an unverified live-data path.
+Confirmed the SablierLockup contract has real bytecode at
+`0x82723c1ffec9d43de5fa80b25da8df99afd470ba` (`eth_getCode` non-empty),
+chain id `0x8f` (143) via `eth_chainId`.
+
+`eth_getLogs` on Monad mainnet is rate-limited to a 100-block range per
+call, which makes scanning for stream-creation events from genesis
+impractical within budget. Used a cheaper path instead: called the
+contract's own `nextStreamId()` view function, which returned `27` —
+meaning only streams 1-26 exist on this deployment so far. Enumerated all
+26 directly via `ownerOf`, `getSender`, `getDepositedAmount`,
+`getWithdrawnAmount`, `getStartTime`, `getEndTime`, `isCancelable`,
+`wasCanceled`, `isDepleted` (selectors computed locally via Keccak-256,
+not guessed from an ABI file, and cross-checked against known Sablier
+Lockup function names).
+
+Picked **stream 23** for the gate: sender `0xb996c591fda11d3e67b8fad59a82d75d4349defe`
+funding recipient `0x77a89c51f106d6cd547542a3a83fe73cb4459135` — a genuine
+third-party stream (the same sender also funds stream 24 to a different
+recipient, i.e. a real one-to-many payroll-shaped pattern, not a
+self-funded test stream). Asset: `0x350035555e10d9afaf1566aaebfced5ba6c27777`
+(symbol `CHOG`, 18 decimals, read from the token contract directly).
+
+All values pinned to block **108,166,208** (unix timestamp 1,790,421,803)
+and re-read at that exact block after the initial unpinned scan, to
+confirm reproducibility — same block, same numbers, both times:
+
+- deposited: 5,000,000 CHOG
+- withdrawn: 500,000 CHOG
+- cancelable: true, not canceled
+- start/end: 1,782,135,900 / 1,841,727,600
+
+Run in `scoring/phase1_gate_live.py` against a $1,000,000-CHOG-equivalent
+illustrative credit ask (the ask itself isn't onchain data — a real
+borrower's requested line is an input to underwriting, not a fact to
+verify — but every number describing the stream backing it is real):
+
+- remaining_value = 4,500,000 CHOG
+- cancelability haircut = 0.5x (stream is sender-cancelable)
+- runway_factor = 1.0 (stream runs well past the 30-day loan term)
+- risk_adjusted_income = 2,250,000 CHOG
+- coverage_ratio = 2.25 → eligible and clears the 1.5x target margin
+- tier = FULL, approved_line = 1,000,000 CHOG (the full ask)
+
+Output is sane and explainable: a real, third-party, cancelable stream
+with 90% of its value still unclaimed comfortably backs a line at half
+its nominal remaining value. Gate passed — Phase 1 is done.
+
+Also worth recording: computed the eight ABI function selectors used
+above locally via Keccak-256 (`pip install pycryptodome`, allowed through
+the environment's package-registry allowlist even while RPC access was
+still blocked) rather than trusting a fetched ABI file, since a wrong
+selector would silently either revert or, worse, hit an unrelated
+function — same "verify against the primary source, not something
+fetched" discipline as Phase 0's contract-address check.
