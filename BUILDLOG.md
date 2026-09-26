@@ -285,3 +285,78 @@ still blocked) rather than trusting a fetched ABI file, since a wrong
 selector would silently either revert or, worse, hit an unrelated
 function — same "verify against the primary source, not something
 fetched" discipline as Phase 0's contract-address check.
+
+## Phase 2 — real-time monitoring mechanism (2026-09-26)
+
+### Mechanism: `scoring/monitor.py`
+
+Polls `rpc.monad.xyz` directly for a given stream's current state, reads
+the block number and timestamp from the same `eth_call`, and re-runs the
+Phase 1 formula on it. No LLM in the loop. Every poll is independently
+reproducible: same block, same output.
+
+### Finding: this RPC node cannot serve arbitrary historical state — retention window slides forward continuously
+
+Original plan was to find the exact historical block where stream 6 (a
+real, already-canceled stream from the Phase 1 enumeration) flipped from
+active to canceled, via binary search on `wasCanceled(6)` across block
+history, and show the score snapping to zero right at that block — a
+real, verified, non-staged state transition.
+
+This failed, and it's worth recording exactly how, because the first
+version of the search silently produced a wrong answer rather than an
+obvious error. Old blocks return JSON-RPC error `-32602`, `"Block
+requested not found ... querying historical state that is not
+available"` — but my first `was_canceled_at()` helper treated *any*
+non-`result` response (both real "not canceled" and "state pruned,
+can't tell") as `False`. That made a monotonic-boolean binary search
+converge on a plausible-looking but meaningless boundary. Caught it only
+by re-querying the two boundary blocks directly and seeing the raw JSON-RPC
+error instead of trusting the search's own output — the same "verify
+before you write it down" instinct as the Phase 1 WebFetch address
+mangling.
+
+Re-ran a bisection for the actual availability boundary itself, and its
+own endpoints changed answers between the search and the follow-up
+verification a few dozen seconds later. That's not a bug in the search —
+it means the retention window is a *sliding* cutoff, not a fixed archive
+depth: a block that was still queryable partway through the search had
+already aged out by the time it was re-checked. There is no stable
+history on this endpoint to reconstruct the past from.
+
+Consequence for Phase 2's design, and it's actually the right consequence
+for this thesis, not just a workaround: monitoring here can only be
+**forward-looking, poll-from-now**, never retrospective reconstruction.
+That's stated as a real infrastructure constraint discovered during
+verification, not chosen for narrative convenience — but it also happens
+to be exactly the shape the pitch already argues for (continuous
+re-scoring going forward, not a periodic look-back).
+
+### Live verification of the polling mechanism
+
+Ran `monitor.py` against stream 23 at block 108,205,082 (t=1,790,433,540):
+same formula, same real stream, output identical in shape to the Phase 1
+gate (coverage ratio 2.25, FULL, approved line unchanged) — confirms the
+poll path itself (RPC round-trip, block+timestamp read, rescoring) works
+correctly against live state, not just the one-shot Phase 1 script.
+
+Then re-enumerated all 26 streams (same view calls as Phase 1) and diffed
+against the Phase 1 snapshot (block 108,166,208, t=1,790,421,803). Block
+timestamps put **11,746 seconds (3.26 hours) of real Monad chain time**
+between the two snapshots (38,904 blocks, ~0.30s/block — consistent with
+Monad's advertised block time, measured directly, not assumed).
+
+**Result: no diffs.** None of `deposited`, `withdrawn`, `canceled`, or
+`depleted` changed on any of the 26 streams across that 3.26-hour window.
+This is a genuine negative result, not a failed test — real income
+streams on a two-month-old deployment with 26 total streams don't churn
+every few hours, and manufacturing a fake diff to report here would
+violate rule #2 as directly as fabricating a wallet's history would.
+
+### Open question for the user: how to close the "visible score change" gate
+
+The mechanism is real and verified working. What's missing is a real,
+non-staged instance of it actually catching a change, because none has
+organically occurred in the observation window available so far. Not
+continuing to poll speculatively — that's open-ended and the budget rule
+says to stop and ask rather than keep searching with no clear resolution.
