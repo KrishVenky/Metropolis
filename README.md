@@ -43,6 +43,10 @@ A hosted copy (once GitHub Pages is enabled on this repo) will also be
 available at the repo's Pages URL — see
 `.github/workflows/deploy-pages.yml`.
 
+**No login, wallet connection, or test credentials are needed** — every
+read is public, unauthenticated chain data. There is nothing to sign in
+to.
+
 ## Run the scoring formula directly
 
 ```
