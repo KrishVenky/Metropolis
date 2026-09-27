@@ -1,0 +1,395 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Concordat — live credit line</title>
+<style>
+  :root {
+    --bg: #0b0e14;
+    --panel: #131722;
+    --panel-border: #232a3b;
+    --text: #e7ebf3;
+    --muted: #8b93a7;
+    --accent: #5b8cff;
+    --full: #35c48c;
+    --tightened: #e0a940;
+    --decline: #e5534b;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    padding: 24px 16px 60px;
+  }
+  .wrap { max-width: 880px; margin: 0 auto; }
+  header { margin-bottom: 24px; }
+  h1 { font-size: 22px; margin: 0 0 4px; letter-spacing: -0.01em; }
+  .tagline { color: var(--muted); font-size: 14px; margin: 0; }
+
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--panel-border);
+    border-radius: 10px;
+    padding: 18px 20px;
+    margin-bottom: 16px;
+  }
+  .panel h2 {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--muted);
+    margin: 0 0 14px;
+    font-weight: 600;
+  }
+
+  .row { display: flex; gap: 20px; flex-wrap: wrap; }
+  .field { display: flex; flex-direction: column; gap: 6px; flex: 1; min-width: 140px; }
+  .field label { font-size: 12px; color: var(--muted); }
+  .field input, .field select {
+    background: #0e1219;
+    border: 1px solid var(--panel-border);
+    color: var(--text);
+    border-radius: 6px;
+    padding: 8px 10px;
+    font-size: 14px;
+    font-family: var(--mono);
+  }
+  .examples { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+  .examples button {
+    background: #0e1219;
+    border: 1px solid var(--panel-border);
+    color: var(--text);
+    border-radius: 999px;
+    padding: 6px 12px;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .examples button:hover { border-color: var(--accent); }
+
+  .kv { display: grid; grid-template-columns: auto 1fr; gap: 6px 16px; font-size: 13px; }
+  .kv dt { color: var(--muted); }
+  .kv dd { margin: 0; font-family: var(--mono); word-break: break-all; }
+
+  .tier-badge {
+    display: inline-block;
+    padding: 3px 10px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+  }
+  .tier-full { background: rgba(53,196,140,0.15); color: var(--full); }
+  .tier-tightened { background: rgba(224,169,64,0.15); color: var(--tightened); }
+  .tier-decline { background: rgba(229,83,75,0.15); color: var(--decline); }
+
+  .score-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 16px; }
+  .stat .label { font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+  .stat .value { font-size: 20px; font-family: var(--mono); }
+
+  .bar-track {
+    height: 8px;
+    background: #0e1219;
+    border-radius: 999px;
+    overflow: hidden;
+    margin-top: 10px;
+  }
+  .bar-fill { height: 100%; border-radius: 999px; transition: width 0.3s ease; }
+
+  .formula-steps { font-size: 13px; line-height: 1.9; color: var(--muted); }
+  .formula-steps b { color: var(--text); font-family: var(--mono); font-weight: 600; }
+
+  .status-line {
+    font-size: 12px; color: var(--muted); display: flex; justify-content: space-between;
+    align-items: center; flex-wrap: wrap; gap: 8px;
+  }
+  .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--full); margin-right: 6px; }
+  .dot.polling { animation: pulse 1.4s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.25; } }
+
+  .disclosure {
+    font-size: 12px; color: var(--muted); border-top: 1px solid var(--panel-border);
+    padding-top: 14px; margin-top: 6px; line-height: 1.6;
+  }
+  .err { color: var(--decline); font-size: 13px; }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Concordat</h1>
+    <p class="tagline">Real-time credit lines against verified onchain income. Formula runs entirely in your browser, reading Monad mainnet directly — nothing mocked, nothing server-side.</p>
+  </header>
+
+  <div class="panel">
+    <h2>Borrower &amp; request</h2>
+    <div class="row">
+      <div class="field">
+        <label for="streamId">Sablier stream ID (Monad mainnet)</label>
+        <input id="streamId" type="number" value="23" min="1">
+      </div>
+      <div class="field">
+        <label for="requestedLine">Requested credit line (token units)</label>
+        <input id="requestedLine" type="number" value="1000000" min="0">
+      </div>
+      <div class="field">
+        <label for="loanTermDays">Loan term (days)</label>
+        <input id="loanTermDays" type="number" value="30" min="1">
+      </div>
+    </div>
+    <div class="examples" id="examples"></div>
+  </div>
+
+  <div class="panel">
+    <h2>Stream state — read live from chain</h2>
+    <div id="streamPanel"><span class="muted">loading…</span></div>
+  </div>
+
+  <div class="panel">
+    <h2>Underwriting result</h2>
+    <div id="scorePanel"><span class="muted">loading…</span></div>
+  </div>
+
+  <div class="panel">
+    <h2>How this number was computed</h2>
+    <div id="formulaPanel" class="formula-steps"></div>
+  </div>
+
+  <div class="panel">
+    <div class="status-line">
+      <span><span class="dot" id="pollDot"></span><span id="statusText">connecting…</span></span>
+      <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+        <input type="checkbox" id="autoPoll" checked> auto-refresh every 6s
+      </label>
+    </div>
+  </div>
+
+  <div class="disclosure">
+    Coverage ratio, cancelability haircut and target margin are a stated,
+    deterministic formula — no model or LLM is involved in scoring, and no
+    onchain value on this page is fabricated. See <code>scoring/model.py</code>
+    and <code>BUILDLOG.md</code> in this repository for the full derivation
+    and the reasoning behind every threshold. Requested credit line and loan
+    term above are inputs you control for this prototype, not a live credit
+    facility — this is a hackathon build, not financial infrastructure yet.
+    Reads Sablier Lockup on Monad mainnet
+    (<code>0x82723c1FfEc9D43de5fA80b25dA8Df99Afd470BA</code>) via the public
+    RPC at <code>rpc.monad.xyz</code>.
+  </div>
+</div>
+
+<script>
+const RPC_URL = "https://rpc.monad.xyz";
+const CONTRACT = "0x82723c1ffec9d43de5fa80b25da8df99afd470ba";
+
+const SEL = {
+  owner: "0x6352211e",
+  sender: "0xb971302a",
+  deposited: "0xa80fc071",
+  withdrawn: "0xd511609f",
+  start: "0xbc2be1be",
+  end: "0x9067b677",
+  cancelable: "0x4857501f",
+  canceled: "0xf590c176",
+};
+
+const EXAMPLES = [
+  { id: 23, label: "#23 — cancelable, third-party" },
+  { id: 24, label: "#24 — same sender, other recipient" },
+  { id: 11, label: "#11 — large cancelable stream" },
+  { id: 20, label: "#20 — self-funded, cancelable" },
+  { id: 13, label: "#13 — non-cancelable, self-funded" },
+];
+
+const CANCELABLE_HAIRCUT = 0.5;
+const NON_CANCELABLE_HAIRCUT = 1.0;
+const ELIGIBILITY_FLOOR_CR = 1.0;
+const TARGET_MARGIN = 1.5;
+
+let rpcId = 1;
+async function rpc(method, params) {
+  const res = await fetch(RPC_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: rpcId++, method, params }),
+  });
+  const json = await res.json();
+  if (json.error) throw new Error(json.error.message || JSON.stringify(json.error));
+  return json.result;
+}
+
+function call(selector, streamId) {
+  const arg = BigInt(streamId).toString(16).padStart(64, "0");
+  return rpc("eth_call", [{ to: CONTRACT, data: selector + arg }, "latest"]);
+}
+
+function asAddr(hex) { return "0x" + hex.slice(-40); }
+function asBigInt(hex) { return BigInt(hex); }
+function asBool(hex) { return BigInt(hex) === 1n; }
+
+async function readStream(streamId) {
+  const blockNumberHex = await rpc("eth_blockNumber", []);
+  const blockNumber = parseInt(blockNumberHex, 16);
+  const block = await rpc("eth_getBlockByNumber", [blockNumberHex, false]);
+  const timestamp = parseInt(block.timestamp, 16);
+
+  const [owner, sender, deposited, withdrawn, start, end, cancelable, canceled] =
+    await Promise.all([
+      call(SEL.owner, streamId),
+      call(SEL.sender, streamId),
+      call(SEL.deposited, streamId),
+      call(SEL.withdrawn, streamId),
+      call(SEL.start, streamId),
+      call(SEL.end, streamId),
+      call(SEL.cancelable, streamId),
+      call(SEL.canceled, streamId),
+    ]);
+
+  return {
+    streamId,
+    owner: asAddr(owner),
+    sender: asAddr(sender),
+    depositAmount: asBigInt(deposited),
+    withdrawnAmount: asBigInt(withdrawn),
+    startTime: parseInt(start, 16),
+    endTime: parseInt(end, 16),
+    cancelable: asBool(cancelable),
+    canceled: asBool(canceled),
+    blockNumber,
+    timestamp,
+  };
+}
+
+// Same formula as scoring/model.py — deterministic, no LLM, mirrors the
+// Python module exactly (see BUILDLOG.md for the derivation).
+function score(stream, requestedCreditLine, loanTermSeconds) {
+  const remainingValue = stream.canceled
+    ? 0
+    : Number(stream.depositAmount - stream.withdrawnAmount) / 1e18;
+
+  const cancelabilityFactor = stream.cancelable ? CANCELABLE_HAIRCUT : NON_CANCELABLE_HAIRCUT;
+
+  const remainingDuration = Math.max(0, stream.endTime - stream.timestamp);
+  const runwayFactor = loanTermSeconds > 0
+    ? Math.min(1, remainingDuration / loanTermSeconds)
+    : 0;
+
+  const riskAdjustedIncome = remainingValue * cancelabilityFactor * runwayFactor;
+  const coverageRatio = requestedCreditLine > 0 ? riskAdjustedIncome / requestedCreditLine : 0;
+
+  let tier, approvedLine;
+  if (coverageRatio < ELIGIBILITY_FLOOR_CR) {
+    tier = "decline";
+    approvedLine = 0;
+  } else {
+    approvedLine = Math.min(requestedCreditLine, riskAdjustedIncome / TARGET_MARGIN);
+    tier = approvedLine >= requestedCreditLine ? "full" : "tightened";
+  }
+
+  return { remainingValue, cancelabilityFactor, runwayFactor, riskAdjustedIncome, coverageRatio, tier, approvedLine };
+}
+
+function fmt(n, digits = 0) {
+  return n.toLocaleString(undefined, { maximumFractionDigits: digits, minimumFractionDigits: digits });
+}
+
+function renderExamples() {
+  const el = document.getElementById("examples");
+  el.innerHTML = "";
+  EXAMPLES.forEach(ex => {
+    const btn = document.createElement("button");
+    btn.textContent = ex.label;
+    btn.onclick = () => { document.getElementById("streamId").value = ex.id; refresh(); };
+    el.appendChild(btn);
+  });
+}
+
+function render(stream, result) {
+  const streamPanel = document.getElementById("streamPanel");
+  streamPanel.innerHTML = `
+    <dl class="kv">
+      <dt>Recipient</dt><dd>${stream.owner}</dd>
+      <dt>Sender</dt><dd>${stream.sender}</dd>
+      <dt>Deposited</dt><dd>${fmt(Number(stream.depositAmount) / 1e18)}</dd>
+      <dt>Withdrawn</dt><dd>${fmt(Number(stream.withdrawnAmount) / 1e18)}</dd>
+      <dt>Start / End (unix)</dt><dd>${stream.startTime} / ${stream.endTime}</dd>
+      <dt>Cancelable</dt><dd>${stream.cancelable}</dd>
+      <dt>Canceled</dt><dd>${stream.canceled}</dd>
+      <dt>Read at block</dt><dd>${stream.blockNumber} (t=${stream.timestamp})</dd>
+    </dl>
+  `;
+
+  const tierClass = "tier-" + result.tier;
+  const barColor = result.tier === "full" ? "var(--full)" : result.tier === "tightened" ? "var(--tightened)" : "var(--decline)";
+  const barPct = Math.max(2, Math.min(100, result.coverageRatio / TARGET_MARGIN * 100));
+
+  const scorePanel = document.getElementById("scorePanel");
+  scorePanel.innerHTML = `
+    <div class="score-grid">
+      <div class="stat"><div class="label">Risk-adjusted income</div><div class="value">${fmt(result.riskAdjustedIncome)}</div></div>
+      <div class="stat"><div class="label">Coverage ratio</div><div class="value">${result.coverageRatio.toFixed(3)}x</div></div>
+      <div class="stat"><div class="label">Tier</div><div class="value"><span class="tier-badge ${tierClass}">${result.tier}</span></div></div>
+      <div class="stat"><div class="label">Approved line</div><div class="value">${fmt(result.approvedLine)}</div></div>
+    </div>
+    <div class="bar-track"><div class="bar-fill" style="width:${barPct}%; background:${barColor}"></div></div>
+  `;
+
+  const formulaPanel = document.getElementById("formulaPanel");
+  formulaPanel.innerHTML = `
+    remaining_value = deposit &minus; withdrawn ${stream.canceled ? "(zeroed: stream was canceled)" : ""} = <b>${fmt(result.remainingValue)}</b><br>
+    cancelability_factor = ${stream.cancelable ? "0.5 (sender-cancelable)" : "1.0 (non-cancelable)"} = <b>${result.cancelabilityFactor}</b><br>
+    runway_factor = min(1, remaining_duration / loan_term) = <b>${result.runwayFactor.toFixed(4)}</b><br>
+    risk_adjusted_income = remaining_value &times; cancelability_factor &times; runway_factor = <b>${fmt(result.riskAdjustedIncome)}</b><br>
+    coverage_ratio = risk_adjusted_income / requested_line = <b>${result.coverageRatio.toFixed(4)}</b><br>
+    ${result.coverageRatio < 1
+      ? `coverage_ratio &lt; 1.0 eligibility floor &rarr; <b>DECLINE</b>, approved_line = <b>0</b>`
+      : `approved_line = min(requested, risk_adjusted_income / 1.5) = <b>${fmt(result.approvedLine)}</b> &rarr; <b>${result.tier.toUpperCase()}</b>`}
+  `;
+}
+
+let pollTimer = null;
+
+async function refresh() {
+  const statusText = document.getElementById("statusText");
+  const dot = document.getElementById("pollDot");
+  dot.classList.add("polling");
+  try {
+    const streamId = parseInt(document.getElementById("streamId").value, 10);
+    const requestedLine = parseFloat(document.getElementById("requestedLine").value) || 0;
+    const loanTermDays = parseFloat(document.getElementById("loanTermDays").value) || 0;
+    const loanTermSeconds = loanTermDays * 24 * 60 * 60;
+
+    const stream = await readStream(streamId);
+    const result = score(stream, requestedLine, loanTermSeconds);
+    render(stream, result);
+
+    statusText.textContent = `live — block ${stream.blockNumber}, last read ${new Date().toLocaleTimeString()}`;
+  } catch (e) {
+    statusText.innerHTML = `<span class="err">error: ${e.message}</span>`;
+  } finally {
+    dot.classList.remove("polling");
+  }
+}
+
+function scheduleNext() {
+  if (pollTimer) clearTimeout(pollTimer);
+  if (document.getElementById("autoPoll").checked) {
+    pollTimer = setTimeout(async () => { await refresh(); scheduleNext(); }, 6000);
+  }
+}
+
+document.getElementById("streamId").addEventListener("change", refresh);
+document.getElementById("requestedLine").addEventListener("input", refresh);
+document.getElementById("loanTermDays").addEventListener("input", refresh);
+document.getElementById("autoPoll").addEventListener("change", scheduleNext);
+
+renderExamples();
+refresh().then(scheduleNext);
+</script>
+</body>
+</html>

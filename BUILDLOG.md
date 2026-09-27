@@ -360,3 +360,61 @@ non-staged instance of it actually catching a change, because none has
 organically occurred in the observation window available so far. Not
 continuing to poll speculatively — that's open-ended and the budget rule
 says to stop and ask rather than keep searching with no clear resolution.
+
+Captured a fresh "before" baseline for this (block 108,211,844, all 26
+streams' state, plus `nextStreamId=27` so a brand-new stream would also
+be caught) in case the user performs a real withdraw/cancel/new-stream
+action. User's direction: proceed to Phase 3 now rather than wait on
+that. **This gate stays explicitly open, not closed** — the mechanism is
+verified, but "one real case where the score visibly changes" has not
+yet been observed. Close it before the submission is final, e.g. by
+triggering a real action right before recording the demo video, using
+the baseline already captured above.
+
+## Phase 3 — demo/UI (2026-09-27)
+
+### `web/index.html`
+
+Single-file, no build step, no framework, no CDN dependency. Reads
+Sablier Lockup directly from `rpc.monad.xyz` in the browser via `fetch`
+(confirmed CORS is open on that endpoint — `access-control-allow-origin`
+echoes the request origin, checked with a raw `curl -X OPTIONS` before
+writing any JS around it, not assumed). Runs the identical formula from
+`scoring/model.py`, reimplemented in vanilla JS line-for-line (haircuts,
+eligibility floor, target-margin sizing) — no server, no LLM, nothing
+computed anywhere but the visitor's own browser against live chain state.
+
+Borrower/request panel lets the visitor change the requested credit line
+and loan term and watch the tier recompute instantly against real stream
+data — this is what "clear pricing" means for this product: the formula
+is not a black box, the page shows its own arithmetic (remaining value,
+each haircut, the resulting ratio) inline, not just a final verdict.
+Auto-refreshes every 6s against live chain state so the block number and
+"read at" timestamp visibly advance, which is the honest way to show
+"real-time" here given Phase 2's finding that this cohort doesn't
+organically change state often — the page is honestly live even when the
+numbers underneath happen to be quiet.
+
+### Verification (not claimed untested)
+
+Installed Playwright against the environment's pre-installed Chromium
+(`/opt/pw-browsers/chromium-1194`) and actually loaded the page:
+
+- Live load against stream 23 reproduced the exact Phase 1 gate numbers
+  (coverage ratio 2.250, FULL, approved line 1,000,000) — confirms the JS
+  port of the formula matches the Python model exactly, not just "looks
+  right."
+- Changing the requested line interactively: DECLINE at a 10,000,000
+  ask, TIGHTENED at 2,000,000, FULL at 1,000,000 — all three tiers
+  reachable and correctly ordered against the same real stream.
+- Switching to stream 13 (non-cancelable, self-funded) via the example
+  buttons re-read a different real stream live and rendered correctly.
+- Zero console errors during any of the above.
+
+One sandbox-only wrinkle, not a product issue: this container's egress
+proxy uses a self-signed CA that Chromium doesn't trust by default, so
+verification here used `--ignore-certificate-errors` to reach
+`rpc.monad.xyz` through it. A real visitor's own browser, on their own
+network, has no such proxy in the path and needs no such flag — this
+was purely to make local verification possible inside this sandboxed
+container.
